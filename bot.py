@@ -15,7 +15,7 @@ def load():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception:
         return {}
 
 
@@ -24,17 +24,17 @@ def save(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def username(user):
+def player_name(user):
     if user.username:
         return f"@{user.username}"
     return user.first_name or "Игрок"
 
 
-def menu():
+def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("🎮 Записаться на игру", "❌ Отменить запись")
     kb.add("📋 Список игр", "⏳ Лист ожидания")
-    kb.add("👑 VIP / Капитанские")
+    kb.add("👑 VIP / Капитанские", "ℹ️ Информация")
     return kb
 
 
@@ -43,7 +43,7 @@ def start(message):
     bot.send_message(
         message.chat.id,
         "Добро пожаловать в HeadShotDubai 🖤\n\nВыбери действие:",
-        reply_markup=menu()
+        reply_markup=main_menu()
     )
 
 
@@ -57,34 +57,31 @@ def new_game(message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    text = message.text.replace("/newgame", "").strip()
-
-    if not text:
-        bot.reply_to(message, "Формат:\n/newgame 15 июня 19:30 - Открытый стол")
+    title = message.text.replace("/newgame", "").strip()
+    if not title:
+        bot.reply_to(message, "Формат:\n/newgame 15 июня 19:30 - Открытый стол HeadShotDubai")
         return
 
     data = load()
-    game_id = str(max([int(x) for x in data.keys()] + [0]) + 1)
+    game_id = str(max([int(k) for k in data.keys()] + [0]) + 1)
 
     data[game_id] = {
-        "title": text,
+        "title": title,
         "players": [],
         "waitlist": [],
         "limit": 10
     }
-
     save(data)
 
-    bot.reply_to(message, f"Игра создана ✅\nID: {game_id}\n{text}")
+    bot.reply_to(message, f"Игра создана ✅\nID: {game_id}\n{title}")
 
 
 @bot.message_handler(commands=["delgame"])
-def delete_game(message):
+def del_game(message):
     if message.from_user.id != ADMIN_ID:
         return
 
     parts = message.text.split()
-
     if len(parts) < 2:
         bot.reply_to(message, "Формат:\n/delgame 1")
         return
@@ -104,56 +101,58 @@ def delete_game(message):
 
 
 @bot.message_handler(commands=["players"])
-def players(message):
+def admin_players(message):
     if message.from_user.id != ADMIN_ID:
         return
+    send_games_list(message.chat.id, admin=True)
 
-    data = load()
 
-    if not data:
-        bot.send_message(message.chat.id, "Пока игр нет.")
+@bot.message_handler(commands=["games"])
+def admin_games(message):
+    if message.from_user.id != ADMIN_ID:
         return
-
-    text = "👥 Списки игроков:\n\n"
-
-    for gid, g in data.items():
-        text += f"🎭 ID {gid}: {g['title']}\n"
-        text += f"Мест: {len(g['players'])}/{g['limit']}\n\n"
-
-        if g["players"]:
-            text += "✅ Игроки:\n"
-            for i, p in enumerate(g["players"], 1):
-                text += f"{i}. {p}\n"
-        else:
-            text += "✅ Игроки: пока нет\n"
-
-        if g["waitlist"]:
-            text += "\n⏳ Лист ожидания:\n"
-            for i, p in enumerate(g["waitlist"], 1):
-                text += f"{i}. {p}\n"
-
-        text += "\n"
-
-    bot.send_message(message.chat.id, text)
+    send_games_list(message.chat.id, admin=True)
 
 
-@bot.message_handler(func=lambda m: m.text == "📋 Список игр")
-def games_list(message):
+def send_games_list(chat_id, admin=False):
     data = load()
 
     if not data:
-        bot.send_message(message.chat.id, "Пока игр нет.")
+        bot.send_message(chat_id, "Пока игр нет.")
         return
 
     text = "📋 Ближайшие игры:\n\n"
 
     for gid, g in data.items():
         free = g["limit"] - len(g["players"])
-        text += f"🎭 ID {gid}: {g['title']}\n"
-        text += f"Мест занято: {len(g['players'])}/{g['limit']}\n"
-        text += f"Свободно мест: {free}\n\n"
 
-    bot.send_message(message.chat.id, text)
+        text += f"🎭 ID {gid}: {g['title']}\n"
+        text += f"👥 Мест занято: {len(g['players'])}/{g['limit']}\n"
+        text += f"✅ Свободно мест: {free}\n"
+
+        if g["players"]:
+            text += "\nИгроки:\n"
+            for i, p in enumerate(g["players"], 1):
+                text += f"{i}. {p}\n"
+        else:
+            text += "\nИгроки: пока никто не записался\n"
+
+        if g["waitlist"]:
+            text += "\n⏳ Лист ожидания:\n"
+            for i, p in enumerate(g["waitlist"], 1):
+                text += f"{i}. {p}\n"
+
+        if admin:
+            text += f"\nУдалить игру: /delgame {gid}\n"
+
+        text += "\n"
+
+    bot.send_message(chat_id, text)
+
+
+@bot.message_handler(func=lambda m: m.text == "📋 Список игр")
+def games_button(message):
+    send_games_list(message.chat.id, admin=False)
 
 
 @bot.message_handler(func=lambda m: m.text == "🎮 Записаться на игру")
@@ -179,7 +178,7 @@ def signup_menu(message):
 def join_game(call):
     gid = call.data.split("_")[1]
     data = load()
-    player = username(call.from_user)
+    player = player_name(call.from_user)
 
     if gid not in data:
         bot.answer_callback_query(call.id, "Игра не найдена")
@@ -195,37 +194,21 @@ def join_game(call):
         game["players"].append(player)
         save(data)
 
-        bot.send_message(
-            call.message.chat.id,
-            f"✅ {player} записан на игру:\n{game['title']}"
-        )
-
-        bot.send_message(
-            ADMIN_ID,
-            f"Новая запись ✅\n{player}\n\nИгра:\n{game['title']}"
-        )
-
+        bot.send_message(call.message.chat.id, f"✅ {player} записан на игру:\n{game['title']}")
+        bot.send_message(ADMIN_ID, f"Новая запись ✅\n{player}\n\nИгра:\n{game['title']}")
     else:
         game["waitlist"].append(player)
         save(data)
 
-        bot.send_message(
-            call.message.chat.id,
-            f"⏳ {player} добавлен в лист ожидания:\n{game['title']}"
-        )
-
-        bot.send_message(
-            ADMIN_ID,
-            f"Новый игрок в листе ожидания ⏳\n{player}\n\nИгра:\n{game['title']}"
-        )
+        bot.send_message(call.message.chat.id, f"⏳ {player} добавлен в лист ожидания:\n{game['title']}")
+        bot.send_message(ADMIN_ID, f"Новый игрок в листе ожидания ⏳\n{player}\n\nИгра:\n{game['title']}")
 
 
 @bot.message_handler(func=lambda m: m.text == "❌ Отменить запись")
 def cancel_signup(message):
     data = load()
-    player = username(message.from_user)
+    player = player_name(message.from_user)
     removed = False
-    promoted = []
 
     for gid, g in data.items():
         if player in g["players"]:
@@ -235,7 +218,10 @@ def cancel_signup(message):
             if g["waitlist"]:
                 next_player = g["waitlist"].pop(0)
                 g["players"].append(next_player)
-                promoted.append((next_player, g["title"]))
+                bot.send_message(
+                    ADMIN_ID,
+                    f"Игрок из листа ожидания перешёл в основной состав ✅\n{next_player}\n\nИгра:\n{g['title']}"
+                )
 
         if player in g["waitlist"]:
             g["waitlist"].remove(player)
@@ -246,21 +232,14 @@ def cancel_signup(message):
     if removed:
         bot.send_message(message.chat.id, "Запись отменена ✅")
         bot.send_message(ADMIN_ID, f"Игрок отменил запись ❌\n{player}")
-
-        for p, title in promoted:
-            bot.send_message(
-                ADMIN_ID,
-                f"Игрок из листа ожидания перешёл в основной состав ✅\n{p}\n\nИгра:\n{title}"
-            )
     else:
         bot.send_message(message.chat.id, "Ты не был записан.")
 
 
 @bot.message_handler(func=lambda m: m.text == "⏳ Лист ожидания")
-def waitlist(message):
+def waitlist_button(message):
     data = load()
     text = "⏳ Лист ожидания:\n\n"
-
     found = False
 
     for gid, g in data.items():
@@ -275,12 +254,23 @@ def waitlist(message):
 
 
 @bot.message_handler(func=lambda m: m.text == "👑 VIP / Капитанские")
-def vip(message):
+def vip_button(message):
     bot.send_message(
         message.chat.id,
         "👑 VIP / Капитанские столы\n\n"
         "Через капитанские столы лучшие игроки проходят в Masters Dubai.\n"
         "Запись открывается отдельно у администратора."
+    )
+
+
+@bot.message_handler(func=lambda m: m.text == "ℹ️ Информация")
+def info_button(message):
+    bot.send_message(
+        message.chat.id,
+        "HeadShotDubai 🎭\n\n"
+        "Спортивная мафия в Дубае.\n"
+        "Открытые игры, VIP / капитанские столы и отборы в Masters Dubai.\n\n"
+        "PS. Семья — это не главное. Семья — это всё."
     )
 
 
