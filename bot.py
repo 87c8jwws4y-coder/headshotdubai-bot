@@ -86,10 +86,12 @@ def register_user(user, nick=None):
     else:
         users[uid]["username"] = user.username or users[uid].get("username", "")
         users[uid]["first_name"] = user.first_name or users[uid].get("first_name", "")
-
         if nick:
             users[uid]["nick"] = nick
 
+        users[uid].setdefault("nick", "")
+        users[uid].setdefault("username", "")
+        users[uid].setdefault("first_name", "")
         users[uid].setdefault("score", 0)
         users[uid].setdefault("status", "Гость")
         users[uid].setdefault("visits", 0)
@@ -125,10 +127,11 @@ def find_user(name):
     target = name.strip().lower().replace("@", "")
 
     for uid, user in users.items():
-        if user.get("nick", "").lower() == target:
-            return uid
+        nick = user.get("nick", "").lower()
+        username = user.get("username", "").lower()
+        first_name = user.get("first_name", "").lower()
 
-        if user.get("username", "").lower() == target:
+        if nick == target or username == target or first_name == target:
             return uid
 
     return None
@@ -139,11 +142,6 @@ def ensure_player(name):
     if uid:
         return uid
     return add_manual_player(name)
-
-
-def player_key_from_telegram(user):
-    register_user(user)
-    return str(user.id)
 
 
 def status_icon(status):
@@ -167,9 +165,13 @@ def show_player(uid):
     nick = user.get("nick") or user.get("first_name") or user.get("username") or uid
     icon = status_icon(user.get("status", "Гость"))
 
-    if icon:
-        return f"{icon} {nick}"
-    return nick
+    return f"{icon} {nick}".strip()
+
+
+def clean_name(uid):
+    users = load_users()
+    user = users.get(uid, {})
+    return user.get("nick") or user.get("first_name") or user.get("username") or uid
 
 
 def player_status(uid):
@@ -181,7 +183,6 @@ def parse_title_limit(raw):
     if "|" in raw:
         title, limit_text = raw.rsplit("|", 1)
         title = title.strip()
-
         try:
             limit = int(limit_text.strip())
         except ValueError:
@@ -202,7 +203,10 @@ def main_menu():
     kb.add("📋 Список игр", "⏳ Лист ожидания")
     kb.add("🏆 Рейтинг клуба", "📜 Правила клуба")
     kb.add("ℹ️ Информация")
-    return kbdef rules_text():
+    return kb
+
+
+def rules_text():
     return (
         "📜 Устав HeadShotDubai\n\n"
         "💳 Стоимость участия:\n"
@@ -265,19 +269,18 @@ def help_text():
     )
 
 
-def create_game(message, game_type, command_name, example_title):
+def create_game(message, game_type, command_name, example):
     if not is_admin(message):
         return
 
     raw = message.text.replace(command_name, "").strip()
 
     if not raw:
-        bot.reply_to(message, f"Формат:\n{command_name} {example_title} | 10")
+        bot.reply_to(message, f"Формат:\n{command_name} {example} | 10")
         return
 
     title, limit = parse_title_limit(raw)
     games = load_games()
-
     game_id = str(max([int(x) for x in games.keys()] + [0]) + 1)
 
     games[game_id] = {
@@ -285,12 +288,7 @@ def create_game(message, game_type, command_name, example_title):
         "type": game_type,
         "limit": limit,
         "slots": [
-            {
-                "time": time_value,
-                "players": [],
-                "waitlist": [],
-                "pending": []
-            }
+            {"time": time_value, "players": [], "waitlist": [], "pending": []}
             for time_value in DEFAULT_TIMES
         ],
         "chat_id": None,
@@ -312,31 +310,25 @@ def create_game(message, game_type, command_name, example_title):
 
 def collect_players(game):
     result = []
-
     for slot in game["slots"]:
         for uid in slot["players"]:
             result.append((uid, slot["time"]))
-
     return result
 
 
 def collect_waitlist(game):
     result = []
-
     for slot in game["slots"]:
         for uid in slot["waitlist"]:
             result.append((uid, slot["time"]))
-
     return result
 
 
 def collect_pending(game):
     result = []
-
     for slot in game["slots"]:
         for uid in slot.get("pending", []):
             result.append((uid, slot["time"]))
-
     return result
 
 
@@ -344,14 +336,26 @@ def player_in_game(game, uid):
     for slot in game["slots"]:
         if uid in slot["players"]:
             return True
-
         if uid in slot["waitlist"]:
             return True
-
         if uid in slot.get("pending", []):
             return True
-
     return False
+
+
+def can_self_signup(game, uid):
+    if game["type"] == "Капитанский стол":
+        return False, "Капитанский стол формирует только администратор."
+
+    if game["type"] == "Закрытый стол":
+        status = player_status(uid)
+
+        if status in ["VIP", "Резидент клуба"]:
+            return True, ""
+
+        return None, "Заявка отправлена ✅ Ожидайте подтверждения администратора."
+
+    return True, ""
 
 
 def game_keyboard(game_id):
@@ -419,8 +423,8 @@ def game_card(game_id):
     for slot in game["slots"]:
         text += f"{slot['time']} — {len(slot['players'])}/{game['limit']}\n"
 
-    players = collect_players(game)
     text += "\n👥 Записанные игроки\n\n"
+    players = collect_players(game)
 
     if players:
         for index, item in enumerate(players, 1):
@@ -446,7 +450,6 @@ def game_card(game_id):
             text += f"{index}. {show_player(uid)} — {time_value}\n"
 
     text += "\nPS. Семья — это не главное. Семья — это всё."
-
     return text
 
 
@@ -464,7 +467,10 @@ def all_games_text():
         text += f"Игроков: {len(collect_players(game))}/{game['limit']}\n"
         text += f"Удалить: /delgame {game_id}\n\n"
 
-    return textdef waitlist_text():
+    return text
+
+
+def waitlist_text():
     games = load_games()
     text = "⏳ Лист ожидания\n\n"
     found = False
@@ -530,23 +536,6 @@ def add_score_to_player(nick, points, reason):
     return users[uid]["score"]
 
 
-def can_self_signup(game, uid):
-    game_type = game["type"]
-
-    if game_type == "Капитанский стол":
-        return False, "Капитанский стол формирует только администратор."
-
-    if game_type == "Закрытый стол":
-        status = player_status(uid)
-
-        if status in ["VIP", "Резидент клуба"]:
-            return True, ""
-
-        return None, "Заявка отправлена ✅ Ожидайте подтверждения администратора."
-
-    return True, ""
-
-
 @bot.message_handler(commands=["start"])
 def start(message):
     register_user(message.from_user)
@@ -569,10 +558,7 @@ def setnick(message):
 
     register_user(message.from_user, nick)
 
-    bot.reply_to(
-        message,
-        f"Игровой ник сохранён ✅\nТеперь ты: {nick}"
-    )
+    bot.reply_to(message, f"Игровой ник сохранён ✅\nТеперь ты: {nick}")
 
 
 @bot.message_handler(commands=["myid"])
@@ -594,32 +580,17 @@ def setgroup(message):
 
 @bot.message_handler(commands=["newgame"])
 def newgame(message):
-    create_game(
-        message,
-        "Открытый стол",
-        "/newgame",
-        "18 июня - Открытый стол"
-    )
+    create_game(message, "Открытый стол", "/newgame", "18 июня - Открытый стол")
 
 
 @bot.message_handler(commands=["closedgame"])
 def closedgame(message):
-    create_game(
-        message,
-        "Закрытый стол",
-        "/closedgame",
-        "18 июня - Закрытый стол"
-    )
+    create_game(message, "Закрытый стол", "/closedgame", "18 июня - Закрытый стол")
 
 
 @bot.message_handler(commands=["newcaptain"])
 def newcaptain(message):
-    create_game(
-        message,
-        "Капитанский стол",
-        "/newcaptain",
-        "20 июня - Капитанский стол"
-    )
+    create_game(message, "Капитанский стол", "/newcaptain", "20 июня - Капитанский стол")
 
 
 @bot.message_handler(commands=["postgame"])
@@ -651,15 +622,10 @@ def postgame(message):
 
     games[game_id]["chat_id"] = sent.chat.id
     games[game_id]["message_id"] = sent.message_id
-
     save_games(games)
 
     try:
-        bot.pin_chat_message(
-            sent.chat.id,
-            sent.message_id,
-            disable_notification=True
-        )
+        bot.pin_chat_message(sent.chat.id, sent.message_id, disable_notification=True)
     except Exception:
         pass
 
@@ -689,10 +655,7 @@ def delgame(message):
     del games[game_id]
     save_games(games)
 
-    bot.reply_to(
-        message,
-        f"Игра удалена ✅\nID: {game_id}\n{title}"
-    )
+    bot.reply_to(message, f"Игра удалена ✅\nID: {game_id}\n{title}")
 
 
 @bot.message_handler(commands=["deleteallgames"])
@@ -745,9 +708,12 @@ def show_game(call):
             call.message.chat.id,
             game_card(game_id),
             reply_markup=game_keyboard(game_id)
-        )@bot.callback_query_handler(func=lambda c: c.data.startswith("join_"))
+        )
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("join_"))
 def join_game(call):
-    uid = player_key_from_telegram(call.from_user)
+    uid = register_user(call.from_user)
 
     _, game_id, slot_index = call.data.split("_")
     slot_index = int(slot_index)
@@ -799,7 +765,7 @@ def join_game(call):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("cancel_"))
 def cancel_from_card(call):
-    uid = player_key_from_telegram(call.from_user)
+    uid = register_user(call.from_user)
 
     game_id = call.data.split("_")[1]
     games = load_games()
@@ -892,16 +858,10 @@ def setnickuser(message):
             users[uid]["nick"] = new_nick
             save_users(users)
 
-            bot.reply_to(
-                message,
-                f"Ник изменён ✅\n@{username} → {new_nick}"
-            )
+            bot.reply_to(message, f"Ник изменён ✅\n@{username} → {new_nick}")
             return
 
-    bot.reply_to(
-        message,
-        "Игрок не найден. Он должен нажать /start или записаться."
-    )
+    bot.reply_to(message, "Игрок не найден. Он должен нажать /start или записаться.")
 
 
 @bot.message_handler(commands=["rename"])
@@ -923,10 +883,7 @@ def rename(message):
     users[uid]["nick"] = new_nick
     save_users(users)
 
-    bot.reply_to(
-        message,
-        f"Ник изменён ✅\n{old_nick} → {new_nick}"
-    )
+    bot.reply_to(message, f"Ник изменён ✅\n{old_nick} → {new_nick}")
 
 
 @bot.message_handler(commands=["addtogame"])
@@ -968,6 +925,7 @@ def addtogame(message):
 
             save_games(games)
             update_group_card(game_id)
+
             bot.reply_to(message, result)
             return
 
@@ -1010,10 +968,7 @@ def removefromgame(message):
     save_games(games)
     update_group_card(game_id)
 
-    bot.reply_to(
-        message,
-        "Игрок удалён ✅" if removed else "Игрок не найден в игре."
-    )
+    bot.reply_to(message, "Игрок удалён ✅" if removed else "Игрок не найден в игре.")
 
 
 @bot.message_handler(commands=["pending"])
@@ -1074,7 +1029,7 @@ def approve(message):
 
     for slot in game["slots"]:
         for uid in list(slot["pending"]):
-            if show_player(uid).replace("👑", "").replace("⭐", "").strip().lower() == nick:
+            if clean_name(uid).lower() == nick:
                 slot["pending"].remove(uid)
 
                 if len(slot["players"]) < game["limit"]:
@@ -1115,7 +1070,7 @@ def reject(message):
 
     for slot in game["slots"]:
         for uid in list(slot["pending"]):
-            if show_player(uid).replace("👑", "").replace("⭐", "").strip().lower() == nick:
+            if clean_name(uid).lower() == nick:
                 slot["pending"].remove(uid)
                 save_games(games)
                 update_group_card(game_id)
@@ -1174,6 +1129,7 @@ def allplayers(message):
 
     for index, uid in enumerate(users.keys(), 1):
         user = users[uid]
+
         text += (
             f"{index}. {show_player(uid)} — "
             f"{user.get('score', 0)} очков | "
@@ -1202,16 +1158,9 @@ def score(message):
         bot.reply_to(message, "Баллы должны быть числом.")
         return
 
-    total = add_score_to_player(
-        nick,
-        points,
-        "Ручная корректировка"
-    )
+    total = add_score_to_player(nick, points, "Ручная корректировка")
 
-    bot.reply_to(
-        message,
-        f"Рейтинг обновлён ✅\n{nick}: {total} очков"
-    )
+    bot.reply_to(message, f"Рейтинг обновлён ✅\n{nick}: {total} очков")
 
 
 @bot.message_handler(commands=["result"])
@@ -1234,16 +1183,9 @@ def result(message):
         bot.reply_to(message, "Баллы должны быть числом.")
         return
 
-    total = add_score_to_player(
-        nick,
-        points,
-        f"Результат игры ID {game_id}"
-    )
+    total = add_score_to_player(nick, points, f"Результат игры ID {game_id}")
 
-    bot.reply_to(
-        message,
-        f"Результат внесён ✅\n{nick}: {total} очков"
-    )
+    bot.reply_to(message, f"Результат внесён ✅\n{nick}: {total} очков")
 
 
 @bot.message_handler(commands=["history"])
@@ -1299,21 +1241,20 @@ def set_status_for_player(message, status_value):
     if not is_admin(message):
         return
 
-    nick = message.text.split(maxsplit=1)[1].strip() if len(message.text.split(maxsplit=1)) > 1 else ""
+    parts = message.text.split(maxsplit=1)
 
-    if not nick:
+    if len(parts) < 2:
         bot.reply_to(message, "Укажи ник игрока.")
         return
 
+    nick = parts[1].strip()
     uid = ensure_player(nick)
+
     users = load_users()
     users[uid]["status"] = status_value
     save_users(users)
 
-    bot.reply_to(
-        message,
-        f"Статус обновлён ✅\n{show_player(uid)}: {status_value}"
-    )
+    bot.reply_to(message, f"Статус обновлён ✅\n{show_player(uid)}: {status_value}")
 
 
 @bot.message_handler(commands=["resident"])
@@ -1355,15 +1296,13 @@ def status(message):
     users[uid]["status"] = status_value
     save_users(users)
 
-    bot.reply_to(
-        message,
-        f"Статус обновлён ✅\n{show_player(uid)}: {status_value}"
-    )
+    bot.reply_to(message, f"Статус обновлён ✅\n{show_player(uid)}: {status_value}")
 
 
 @bot.message_handler(commands=["profile"])
 def profile(message):
     uid = register_user(message.from_user)
+
     users = load_users()
     user = users[uid]
 
@@ -1400,10 +1339,7 @@ def announcement(message):
         bot.reply_to(message, "Сначала выполни /setgroup в группе.")
         return
 
-    bot.send_message(
-        group_id,
-        f"📢 Официальное объявление HeadShotDubai\n\n{text}"
-    )
+    bot.send_message(group_id, f"📢 Официальное объявление HeadShotDubai\n\n{text}")
 
     bot.reply_to(message, "Объявление опубликовано ✅")
 
@@ -1425,17 +1361,10 @@ def pinannouncement(message):
         bot.reply_to(message, "Сначала выполни /setgroup в группе.")
         return
 
-    sent = bot.send_message(
-        group_id,
-        f"📌 Важное объявление HeadShotDubai\n\n{text}"
-    )
+    sent = bot.send_message(group_id, f"📌 Важное объявление HeadShotDubai\n\n{text}")
 
     try:
-        bot.pin_chat_message(
-            group_id,
-            sent.message_id,
-            disable_notification=True
-        )
+        bot.pin_chat_message(group_id, sent.message_id, disable_notification=True)
     except Exception:
         pass
 
@@ -1474,7 +1403,40 @@ def remindgame(message):
     if not is_admin(message):
         return
 
-    bot.reply_to(message, "Напоминание подготовлено ✅")
+    parts = message.text.split()
+
+    if len(parts) < 2:
+        bot.reply_to(message, "Формат:\n/remindgame ID")
+        return
+
+    game_id = parts[1]
+    games = load_games()
+
+    if game_id not in games:
+        bot.reply_to(message, "Игра не найдена.")
+        return
+
+    game = games[game_id]
+    players = collect_players(game)
+    sent = 0
+
+    for uid, time_value in players:
+        if uid.startswith("manual_"):
+            continue
+
+        try:
+            bot.send_message(
+                int(uid),
+                f"🎭 Напоминание HeadShotDubai\n\n"
+                f"Игра: {game['title']}\n"
+                f"Время: {time_value}\n\n"
+                f"Ждём тебя за столом."
+            )
+            sent += 1
+        except Exception:
+            pass
+
+    bot.reply_to(message, f"Напоминание отправлено ✅\nПолучателей: {sent}")
 
 
 @bot.message_handler(commands=["rules"])
@@ -1503,4 +1465,4 @@ def info(message):
     )
 
 
-bot.infinity_polling()
+bot.infinity_polling(skip_pending=True)
