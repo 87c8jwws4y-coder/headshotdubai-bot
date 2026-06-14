@@ -170,5 +170,26 @@ def vip(message):
         "Запись открывается отдельно у администратора."
     )
 
+@bot.message_handler(commands=["delgame"])
+def delete_game(message):
+    if message.from_user.id != ADMIN_ID:
+        return
 
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "Формат: /delgame 1")
+        return
+
+    gid = parts[1]
+    data = load()
+
+    if gid not in data:
+        bot.reply_to(message, "Игра не найдена.")
+        return
+
+    title = data[gid]["title"]
+    del data[gid]
+    save(data)
+
+    bot.reply_to(message, f"Игра удалена ✅\nID: {gid}\n{title}")
 bot.infinity_polling()
