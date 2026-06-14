@@ -931,5 +931,38 @@ def info(message):
         "PS. Семья — это не главное. Семья — это всё."
     )
 
+@bot.message_handler(commands=["setnickuser"])
+def setnickuser(message):
+    if not is_admin(message):
+        return
 
+    parts = message.text.split(maxsplit=2)
+
+    if len(parts) < 3:
+        bot.reply_to(
+            message,
+            "Формат:\n/setnickuser @username НовыйНик"
+        )
+        return
+
+    username = parts[1].replace("@", "")
+    new_nick = parts[2]
+
+    users = load_users()
+
+    for user_id, user in users.items():
+        if user.get("username", "").lower() == username.lower():
+            users[user_id]["nick"] = new_nick
+            save_users(users)
+
+            bot.reply_to(
+                message,
+                f"Ник изменён ✅\n@{username} → {new_nick}"
+            )
+            return
+
+    bot.reply_to(
+        message,
+        "Игрок не найден в базе.\nОн должен хотя бы один раз нажать /start."
+    )
 bot.infinity_polling()
