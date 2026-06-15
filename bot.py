@@ -194,6 +194,38 @@ def say(message):
     bot.reply_to(message, "Отправил ✅")
 
 
+@bot.message_handler(commands=["poll"])
+def create_poll(message):
+    if not admin_only(message):
+        return
+
+    text = message.text.replace("/poll", "", 1).strip()
+    parts = [x.strip() for x in text.split("|") if x.strip()]
+
+    if len(parts) < 3:
+        bot.reply_to(message, "Формат:\n/poll Вопрос | Вариант 1 | Вариант 2")
+        return
+
+    question = parts[0]
+    options = parts[1:]
+
+    data = load_data()
+    group_id = data.get("group_id")
+
+    if not group_id:
+        bot.reply_to(message, "Сначала напиши /setgroup в группе.")
+        return
+
+    bot.send_poll(
+        chat_id=group_id,
+        question=question,
+        options=options,
+        is_anonymous=False
+    )
+
+    bot.reply_to(message, "Опрос создан ✅")
+
+
 @bot.message_handler(commands=["newgame"])
 def newgame(message):
     if not admin_only(message):
@@ -534,7 +566,14 @@ def button_cancel(message):
 def rules_button(call):
     data = load_data()
     bot.answer_callback_query(call.id)
-    bot.send_message(call.from_user.id, data["rules"])
+    try:
+        bot.send_message(call.from_user.id, data["rules"])
+    except Exception:
+        bot.answer_callback_query(
+            call.id,
+            "Сначала нажми /start в личке бота.",
+            show_alert=True
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("join_"))
@@ -546,7 +585,15 @@ def join_start(call):
         kb.add(types.InlineKeyboardButton(t, callback_data=f"time_{game_id}_{t}"))
 
     bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, "Выбери время:", reply_markup=kb)
+
+    try:
+        bot.send_message(call.from_user.id, "Выбери время:", reply_markup=kb)
+    except Exception:
+        bot.answer_callback_query(
+            call.id,
+            "Сначала нажми /start в личке бота, потом попробуй снова.",
+            show_alert=True
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("time_"))
@@ -586,7 +633,11 @@ def join_time(call):
     save_data(data)
 
     bot.answer_callback_query(call.id, "Ты записан ✅")
-    bot.send_message(call.message.chat.id, f"{display_player(player)} записан на игру #{game_id} в {time} ✅")
+
+    try:
+        bot.send_message(call.from_user.id, f"Ты записан на игру #{game_id} в {time} ✅")
+    except Exception:
+        pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_"))
@@ -618,7 +669,11 @@ def cancel(call):
     save_data(data)
 
     bot.answer_callback_query(call.id, "Запись отменена ✅")
-    bot.send_message(call.message.chat.id, f"{display_player(player)} отменил запись на игру #{game_id} ✅")
+
+    try:
+        bot.send_message(call.from_user.id, f"Запись на игру #{game_id} отменена ✅")
+    except Exception:
+        pass
 
 
 bot.infinity_polling()
