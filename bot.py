@@ -48,6 +48,12 @@ def norm(name):
     return name.strip().lower()
 
 
+def tg_name(user):
+    if user.username:
+        return f"@{user.username}"
+    return f"tg_{user.id}"
+
+
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("🎮 Записаться на игру", "❌ Отменить запись")
@@ -62,7 +68,7 @@ def get_player(data, name):
     if key not in data["players"]:
         data["players"][key] = {
             "name": name.strip(),
-            "nick": name.strip(),
+            "nick": "",
             "status": "",
             "telegram_id": None
         }
@@ -70,21 +76,27 @@ def get_player(data, name):
 
 
 def get_player_by_telegram(data, user):
-    name = user.first_name or user.username or str(user.id)
+    username = tg_name(user)
 
     for player in data["players"].values():
         if player.get("telegram_id") == user.id:
             return player
 
-    player = get_player(data, name)
+    player = get_player(data, username)
     player["telegram_id"] = user.id
     return player
 
 
 def display_player(player):
     status = player.get("status", "")
-    nick = player.get("nick") or player.get("name")
-    return f"{nick} {status}".strip()
+    nick = player.get("nick")
+
+    if nick:
+        name = nick
+    else:
+        name = player.get("name")
+
+    return f"{name} {status}".strip()
 
 
 def render_game(data, game):
@@ -251,7 +263,7 @@ def addplayer(message):
 
     parts = message.text.split(maxsplit=3)
     if len(parts) < 4:
-        bot.reply_to(message, "Формат: /addplayer 1 Адам 20:00")
+        bot.reply_to(message, "Формат: /addplayer 1 @username 20:00")
         return
 
     game_id = int(parts[1])
@@ -293,7 +305,7 @@ def removeplayer(message):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.reply_to(message, "Формат: /removeplayer 1 Адам")
+        bot.reply_to(message, "Формат: /removeplayer 1 @username")
         return
 
     game_id = int(parts[1])
@@ -327,14 +339,14 @@ def setnick(message):
             return
 
         user = message.reply_to_message.from_user
-        old_name = user.first_name or user.username or str(user.id)
+        old_name = tg_name(user)
         player = get_player(data, old_name)
         player["telegram_id"] = user.id
         player["nick"] = parts[1]
     else:
         parts = message.text.split(maxsplit=2)
         if len(parts) < 3:
-            bot.reply_to(message, "Формат: /setnick Адам Adam")
+            bot.reply_to(message, "Формат: /setnick @username НовыйНик")
             return
 
         player = get_player(data, parts[1])
@@ -356,13 +368,13 @@ def set_status(message, status):
 
     if message.reply_to_message:
         user = message.reply_to_message.from_user
-        name = user.first_name or user.username or str(user.id)
+        name = tg_name(user)
         player = get_player(data, name)
         player["telegram_id"] = user.id
     else:
         parts = message.text.split(maxsplit=1)
         if len(parts) < 2:
-            bot.reply_to(message, "Напиши имя или ответь командой на сообщение игрока.")
+            bot.reply_to(message, "Напиши @username или ответь командой на сообщение игрока.")
             return
         player = get_player(data, parts[1])
 
